@@ -1,6 +1,6 @@
 module github.com/Catizard/Ginger-Downloader
 
-go 1.25.8
+go 1.25.6
 
 require (
 	charm.land/bubbles/v2 v2.0.0
