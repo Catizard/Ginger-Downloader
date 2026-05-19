@@ -2,19 +2,41 @@ package ui
 
 import (
 	"fmt"
+	"log"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/Catizard/Ginger-Downloader/internal/promise"
+	"github.com/Catizard/bmstable"
 )
 
+type tablesModelState int
+
+const (
+	INPUT_TABLE_URL     = iota
+	FETCHING_TABLE_DATA = iota
+)
+
+// TablesModel reads the user specified table's url
 type TablesModel struct {
-	cursor int
-	err    error
-	ctx    *viewContext
+	textInput textinput.Model
+	state     tablesModelState
+	err       error
+	ctx       *viewContext
+	waitTable *promise.Await[bmstable.DifficultTable]
 }
 
 func InitializeTablesModel(ctx *viewContext) TablesModel {
+	ti := textinput.New()
+	// ti.SetVirtualCursor(false)
+	ti.Focus()
+	ti.CharLimit = 256
+	ti.SetWidth(128)
 	return TablesModel{
-		ctx: ctx,
+		textInput: ti,
+		ctx:       ctx,
+		waitTable: promise.NewAwait[bmstable.DifficultTable](),
 	}
 }
 
@@ -23,47 +45,63 @@ func (m TablesModel) Init() tea.Cmd {
 }
 
 func (m TablesModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.ctx.bootInfo != nil {
-		switch msg := msg.(type) {
-		case tea.KeyPressMsg:
-			switch msg.String() {
-			case "up", "k":
-				m.cursor = (m.cursor - 1 + m.lenHeaders()) % m.lenHeaders()
-			case "down", "j":
-				m.cursor = (m.cursor + 1) % m.lenHeaders()
-			case "enter":
-				header := m.ctx.bootInfo.summary.Headers[m.cursor]
-				m.ctx.candidateHeader = &header
-				return m, newTransferRequest(SCENE_PREPARE)
-			case "esc":
-				return m, newTransferRequest(SCENE_MENU)
+	select {
+	case p := <-m.waitTable.Done:
+		if p.Err != nil {
+			m.err = p.Err
+		} else {
+			if p.Data == nil {
+				log.Fatal("table data is empty")
+			}
+			m.ctx.candidateTable = *p.Data
+			return m, tea.Sequence(newTransferRequest(SCENE_PREPARE))
+		}
+	default:
+	}
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		if msg.String() == "enter" {
+			url := m.textInput.Value()
+			if m.state == INPUT_TABLE_URL && url != "" {
+				go m.fetchTableData(url)
+				m.state = FETCHING_TABLE_DATA
 			}
 		}
 	}
-	return m, nil
+	var cmd tea.Cmd
+	m.textInput, cmd = m.textInput.Update(msg)
+	return m, cmd
 }
 
 func (m TablesModel) View() tea.View {
-	if m.ctx.bootInfo == nil {
-		return tea.NewView("No boot info passed, please restart the program to try again or fire a new bug report!")
+	s := lipgloss.JoinVertical(
+		lipgloss.Top,
+		"Input the url of the difficult table you want to download with",
+		"Press enter to submit",
+		m.textInput.View(),
+	)
+	if m.state == FETCHING_TABLE_DATA {
+		s = lipgloss.JoinVertical(
+			lipgloss.Top,
+			s,
+			"Fetching table data...Please wait :)",
+		)
+	} else if m.state == INPUT_TABLE_URL && m.err != nil {
+		s = lipgloss.JoinVertical(
+			lipgloss.Top,
+			s,
+			fmt.Sprintf("Failed to load table data: %v", m.err),
+		)
 	}
-
-	s := ""
-	for i, header := range m.ctx.bootInfo.summary.Headers {
-		if i == m.cursor {
-			s += "> "
-		} else {
-			s += "  "
-		}
-		s += fmt.Sprintf("%s (%d/%d)\n", header.Name, header.DataCount-header.MissingCount, header.DataCount)
-	}
-
 	return tea.NewView(s)
 }
 
-func (m TablesModel) lenHeaders() int {
-	if m.ctx.bootInfo == nil {
-		return 0
+func (m TablesModel) fetchTableData(url string) {
+	dt, err := bmstable.ParseFromURL(url)
+	if err != nil {
+		m.waitTable.Done <- promise.Fail[bmstable.DifficultTable](err)
+		return
 	}
-	return len(m.ctx.bootInfo.summary.Headers)
+
+	m.waitTable.Done <- promise.Ok(&dt)
 }

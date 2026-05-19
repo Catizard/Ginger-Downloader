@@ -10,21 +10,17 @@ import (
 	"github.com/Catizard/Ginger-Downloader/internal/promise"
 	"github.com/Catizard/Ginger-Downloader/pkg/ginger"
 	"github.com/Catizard/bmsdb"
-	"github.com/Catizard/bmstable"
 )
 
 type prepareModel struct {
 	ctx *viewContext
 
-	downloadSpinner    spinner.Model
 	localDataSpinner   spinner.Model
 	prepareTaskSpinner spinner.Model
 
-	waitTable     *promise.Await[bmstable.DifficultTable]
 	waitLocalData *promise.Await[[]ginger.SabunHash]
 	waitPrepare   *promise.Await[[]candidateDownloadTask]
 
-	candidateTable          bmstable.DifficultTable
 	ignoringMD5Hashes       map[string]any
 	ignoringSHA256Hashes    map[string]any
 	prepareDownloadTaskFlag bool
@@ -38,8 +34,6 @@ type candidateDownloadTask struct {
 }
 
 func initializePrepareModel(ctx *viewContext) prepareModel {
-	downloadSpinner := spinner.New()
-	downloadSpinner.Spinner = spinner.Dot
 	localDataSpinner := spinner.New()
 	localDataSpinner.Spinner = spinner.Dot
 	prepareTaskSpinner := spinner.New()
@@ -48,10 +42,8 @@ func initializePrepareModel(ctx *viewContext) prepareModel {
 	// TODO: Download directory
 	return prepareModel{
 		ctx:                  ctx,
-		downloadSpinner:      downloadSpinner,
 		localDataSpinner:     localDataSpinner,
 		prepareTaskSpinner:   prepareTaskSpinner,
-		waitTable:            promise.NewAwait[bmstable.DifficultTable](),
 		waitLocalData:        promise.NewAwait[[]ginger.SabunHash](),
 		waitPrepare:          promise.NewAwait[[]candidateDownloadTask](),
 		ignoringMD5Hashes:    make(map[string]any),
@@ -60,24 +52,12 @@ func initializePrepareModel(ctx *viewContext) prepareModel {
 }
 
 func (m prepareModel) Init() tea.Cmd {
-	go m.downloadTableData(m.ctx.candidateHeader.HeaderURL, m.waitTable.Done)
 	go m.readLocalData(m.waitLocalData.Done)
-	return tea.Batch(m.downloadSpinner.Tick, m.localDataSpinner.Tick, m.prepareTaskSpinner.Tick)
+	return tea.Batch(m.localDataSpinner.Tick, m.prepareTaskSpinner.Tick)
 }
 
 func (m prepareModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	select {
-	case p := <-m.waitTable.Done:
-		if p.Err != nil {
-			// TODO: Do something here
-			log.Fatalf("something fatal happened: %s", p.Err)
-		}
-		m.candidateTable = *p.Data
-		m.waitTable.Loaded = true
-		if !m.prepareDownloadTaskFlag && m.waitLocalData.Loaded && m.waitTable.Loaded {
-			go m.prepareTasksToDownload(m.waitPrepare.Done)
-			m.prepareDownloadTaskFlag = true
-		}
 	case p := <-m.waitLocalData.Done:
 		if p.Err != nil {
 			log.Fatalf("something fatal happened: %s", p.Err)
@@ -92,7 +72,7 @@ func (m prepareModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.waitLocalData.Loaded = true
-		if !m.prepareDownloadTaskFlag && m.waitLocalData.Loaded && m.waitTable.Loaded {
+		if !m.prepareDownloadTaskFlag && m.waitLocalData.Loaded {
 			go m.prepareTasksToDownload(m.waitPrepare.Done)
 			m.prepareDownloadTaskFlag = true
 		}
@@ -108,8 +88,6 @@ func (m prepareModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd = nil
 	var cmds tea.Cmd
-	m.downloadSpinner, cmd = m.downloadSpinner.Update(msg)
-	cmds = tea.Batch(cmds, cmd)
 	m.localDataSpinner, cmd = m.localDataSpinner.Update(msg)
 	cmds = tea.Batch(cmds, cmd)
 	m.prepareTaskSpinner, cmd = m.prepareTaskSpinner.Update(msg)
@@ -120,11 +98,6 @@ func (m prepareModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m prepareModel) View() tea.View {
 	s := ""
 	if !m.prepareDownloadTaskFlag {
-		if !m.waitTable.Loaded {
-			s += fmt.Sprintf("%s Downloading table data\n", m.downloadSpinner.View())
-		} else {
-			s += "Table data downloaded\n"
-		}
 		if !m.waitLocalData.Loaded {
 			s += fmt.Sprintf("%s Reading local data\n", m.localDataSpinner.View())
 		} else {
@@ -141,25 +114,22 @@ func (m prepareModel) View() tea.View {
 	return tea.NewView(s)
 }
 
-func (m prepareModel) downloadTableData(tableURL string, done chan<- promise.Promise[bmstable.DifficultTable]) {
-	dt, err := bmstable.ParseFromURL(tableURL)
-	if err != nil {
-		done <- promise.Fail[bmstable.DifficultTable](err)
-		return
-	}
-
-	done <- promise.Ok(&dt)
-}
-
 func (m prepareModel) readLocalData(done chan<- promise.Promise[[]ginger.SabunHash]) {
 	data := make([]ginger.SabunHash, 0)
-	conf := m.ctx.conf
+	conf := config.Snapshot.Load()
 	switch conf.ClientType {
 	case config.CLIENT_BEATORAJA:
-		reader := bmsdb.NewBeatorajaReader()
-		songs, err := reader.SongData(bmsdb.NewQueryContext(conf.LocalDBPath))
+		beatorajaScanner := bmsdb.NewBeatorajaScanner()
+		scanResult, err := beatorajaScanner.ScanDirectory(conf.GameInstallationPath)
 		if err != nil {
 			done <- promise.Fail[[]ginger.SabunHash](err)
+			return
+		}
+		reader := bmsdb.NewBeatorajaReader()
+		songs, err := reader.SongData(bmsdb.NewQueryContext(scanResult.SongData))
+		if err != nil {
+			done <- promise.Fail[[]ginger.SabunHash](err)
+			return
 		}
 		for _, song := range songs {
 			data = append(data, ginger.SabunHash{
@@ -168,10 +138,17 @@ func (m prepareModel) readLocalData(done chan<- promise.Promise[[]ginger.SabunHa
 			})
 		}
 	case config.CLIENT_LR2:
-		reader := bmsdb.NewLR2Reader()
-		songs, err := reader.Song(bmsdb.NewQueryContext(conf.LocalDBPath))
+		lr2Scanner := bmsdb.NewLR2Scanner()
+		scanResult, err := lr2Scanner.ScanDirectory(conf.GameInstallationPath)
 		if err != nil {
 			done <- promise.Fail[[]ginger.SabunHash](err)
+			return
+		}
+		reader := bmsdb.NewLR2Reader()
+		songs, err := reader.Song(bmsdb.NewQueryContext(scanResult.Song))
+		if err != nil {
+			done <- promise.Fail[[]ginger.SabunHash](err)
+			return
 		}
 		for _, song := range songs {
 			data = append(data, ginger.SabunHash{
@@ -186,7 +163,8 @@ func (m prepareModel) readLocalData(done chan<- promise.Promise[[]ginger.SabunHa
 func (m prepareModel) prepareTasksToDownload(done chan<- promise.Promise[[]candidateDownloadTask]) {
 	go func() {
 		data := make([]candidateDownloadTask, 0)
-		for _, content := range m.candidateTable.Contents {
+		candidateTable := m.ctx.candidateTable
+		for _, content := range candidateTable.Contents {
 			candidate := candidateDownloadTask{
 				Name: content.Title,
 			}

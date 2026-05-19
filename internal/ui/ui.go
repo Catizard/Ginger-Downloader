@@ -3,19 +3,13 @@ package ui
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"github.com/Catizard/Ginger-Downloader/internal/config"
-	"github.com/Catizard/Ginger-Downloader/pkg/ginger"
+	"github.com/Catizard/bmstable"
 )
 
 const (
-	SCENE_BOOT       = "BOOT"
-	SCENE_WIZARD     = "WIZARD"
-	SCENE_MENU       = "MENU"
-	SCENE_TABLES     = "TABLES"
-	SCENE_DOWNLOAD   = "DOWNLOAD"
-	SCENE_SYNC_TABLE = "SYNC_TABLE"
-	SCENE_PREPARE    = "PREPARE"
-	SCENE_HELP       = "HELP"
+	SCENE_TABLES   = "TABLES"
+	SCENE_DOWNLOAD = "DOWNLOAD"
+	SCENE_PREPARE  = "PREPARE"
 )
 
 type transferMsg string
@@ -35,10 +29,8 @@ type MainController struct {
 
 // ViewContext is the 'global' state shared for all views to read and write
 type viewContext struct {
-	bootInfo        *bootInfo
-	candidateHeader *ginger.TableHeader
-	candidateTasks  []candidateDownloadTask
-	conf            *config.Config
+	candidateTasks []candidateDownloadTask
+	candidateTable bmstable.DifficultTable
 }
 
 func InitMainController() MainController {
@@ -46,17 +38,12 @@ func InitMainController() MainController {
 		candidateTasks: make([]candidateDownloadTask, 0),
 	}
 	views := make(map[string]tea.Model)
-	views[SCENE_BOOT] = InitializeBootModel(&ctx)
-	views[SCENE_WIZARD] = InitializeWizardModel(&ctx)
-	views[SCENE_MENU] = InitializeMenuModel()
 	views[SCENE_TABLES] = InitializeTablesModel(&ctx)
 	views[SCENE_DOWNLOAD] = InitializeDownloadModel(&ctx)
-	views[SCENE_SYNC_TABLE] = InitializeSyncTableModel(&ctx)
 	views[SCENE_PREPARE] = initializePrepareModel(&ctx)
-	views[SCENE_HELP] = initializeHelpModel(&ctx)
 
 	return MainController{
-		current: views[SCENE_BOOT],
+		current: views[SCENE_TABLES],
 		views:   views,
 		ctx:     &ctx,
 	}

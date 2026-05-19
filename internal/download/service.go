@@ -52,8 +52,6 @@ func NewDownloadTaskService(downloadDirectory string, maximumDownloadCount int) 
 		maximumDownloadCount: maximumDownloadCount,
 	}
 	go service.receive()
-	// go service.debugProgress()
-	go service.pushupState()
 	return service
 }
 
@@ -100,32 +98,6 @@ func (s *DownloadTaskService) receive() {
 	}
 }
 
-// Push current download task states up to frontend
-func (s *DownloadTaskService) pushupState() {
-	for {
-		_, n, err := s.FindDownloadTaskList()
-		if err != nil {
-			// log.Errorf("cannot pushup download task state: %s", err)
-		} else if n > 0 {
-			// s.eventService.PushEvent("DownloadTask:pushup", tasks)
-			// TODO: Push up data to listeners
-		}
-		time.Sleep(1 * time.Second)
-	}
-}
-
-// Only for debug usage
-func (s *DownloadTaskService) debugProgress() {
-	for {
-		s.lock()
-		for _, task := range s.runningTasks {
-			log.Printf("task: %d(%s), download=%d, content=%d", task.ID, task.URL, task.DownloadSize, task.ContentLength)
-		}
-		s.unlock()
-		time.Sleep(1 * time.Second)
-	}
-}
-
 func (s *DownloadTaskService) handleUpdateTask(msg *taskUpdMsg) error {
 	s.lock()
 	defer s.unlock()
@@ -140,6 +112,7 @@ func (s *DownloadTaskService) handleUpdateTask(msg *taskUpdMsg) error {
 				task.ErrorMessage = msg.err.Error()
 				s.errCount++
 			} else {
+				log.Printf("[DownloadTaskService] task %d done", msg.taskID)
 				*task.Status = TASK_SUCCESS
 			}
 		} else {
@@ -174,7 +147,7 @@ func (s *DownloadTaskService) tryKickingWaitTask() {
 	s.runningTasks[taskID] = next
 	go func() {
 		// Open a no timeout, cancelable client
-		client := req.C().SetTimeout(0)
+		client := req.C().SetTimeout(0).SetCommonRetryCount(-1)
 		// Prevent a very rare race condition?
 		s.lock()
 		ctx, cancel := context.WithCancel(context.Background())

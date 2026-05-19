@@ -93,7 +93,6 @@ func (d *gingerDownloadSource) queryPackage(metaQueryURL string) (*mResp, error)
 	if err = json.Unmarshal(b, &result); err != nil {
 		return nil, eris.Wrapf(err, "failed to unmarshal result: %s", string(b))
 	}
-	log.Printf("%v\n", result)
 	return &result, nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Catizard/Ginger-Downloader/internal/config"
 	"github.com/Catizard/Ginger-Downloader/internal/download"
 )
 
@@ -40,7 +41,8 @@ func (m DownloadModel) Init() tea.Cmd {
 func (m DownloadModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	lock.Lock()
 	if m.downloadService == nil {
-		downloadDirectory := m.ctx.conf.DownloadDirectory
+		conf := config.Snapshot.Load()
+		downloadDirectory := conf.DownloadDirectory
 		m.downloadService = download.NewDownloadTaskService(downloadDirectory, 5)
 		go m.submitDownloadTasks()
 	}
