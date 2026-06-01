@@ -7,7 +7,7 @@ Ginger-Downloader is a small tui application that helps you download packages fr
 
 ## How to use
 
-Arrow key or hjkl to move the cursor. Press enter key for selection.
+Grab a executable file from releases. Open it. The first launch it will ask you to create config file called config.jsonc under the same directory. Edit it and re-open the downloader. Now if your config is all-set, it will ask you to input a difficult table's url. After input and pressing enter button the download process will be started. Enjoy.
 
 ## LICENSE
 
