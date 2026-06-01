@@ -8,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/Catizard/Ginger-Downloader/internal/config"
 	"github.com/Catizard/Ginger-Downloader/internal/promise"
-	"github.com/Catizard/Ginger-Downloader/pkg/ginger"
 	"github.com/Catizard/bmsdb"
 )
 
@@ -18,7 +17,7 @@ type prepareModel struct {
 	localDataSpinner   spinner.Model
 	prepareTaskSpinner spinner.Model
 
-	waitLocalData *promise.Await[[]ginger.SabunHash]
+	waitLocalData *promise.Await[[]SabunHash]
 	waitPrepare   *promise.Await[[]candidateDownloadTask]
 
 	ignoringMD5Hashes       map[string]any
@@ -33,6 +32,11 @@ type candidateDownloadTask struct {
 	UseMD5 bool
 }
 
+type SabunHash struct {
+	SHA256 string
+	MD5    string
+}
+
 func initializePrepareModel(ctx *viewContext) prepareModel {
 	localDataSpinner := spinner.New()
 	localDataSpinner.Spinner = spinner.Dot
@@ -44,7 +48,7 @@ func initializePrepareModel(ctx *viewContext) prepareModel {
 		ctx:                  ctx,
 		localDataSpinner:     localDataSpinner,
 		prepareTaskSpinner:   prepareTaskSpinner,
-		waitLocalData:        promise.NewAwait[[]ginger.SabunHash](),
+		waitLocalData:        promise.NewAwait[[]SabunHash](),
 		waitPrepare:          promise.NewAwait[[]candidateDownloadTask](),
 		ignoringMD5Hashes:    make(map[string]any),
 		ignoringSHA256Hashes: make(map[string]any),
@@ -114,25 +118,25 @@ func (m prepareModel) View() tea.View {
 	return tea.NewView(s)
 }
 
-func (m prepareModel) readLocalData(done chan<- promise.Promise[[]ginger.SabunHash]) {
-	data := make([]ginger.SabunHash, 0)
+func (m prepareModel) readLocalData(done chan<- promise.Promise[[]SabunHash]) {
+	data := make([]SabunHash, 0)
 	conf := config.Snapshot.Load()
 	switch conf.ClientType {
 	case config.CLIENT_BEATORAJA:
 		beatorajaScanner := bmsdb.NewBeatorajaScanner()
 		scanResult, err := beatorajaScanner.ScanDirectory(conf.GameInstallationPath)
 		if err != nil {
-			done <- promise.Fail[[]ginger.SabunHash](err)
+			done <- promise.Fail[[]SabunHash](err)
 			return
 		}
 		reader := bmsdb.NewBeatorajaReader()
 		songs, err := reader.SongData(bmsdb.NewQueryContext(scanResult.SongData))
 		if err != nil {
-			done <- promise.Fail[[]ginger.SabunHash](err)
+			done <- promise.Fail[[]SabunHash](err)
 			return
 		}
 		for _, song := range songs {
-			data = append(data, ginger.SabunHash{
+			data = append(data, SabunHash{
 				MD5:    song.Md5,
 				SHA256: song.Sha256,
 			})
@@ -141,17 +145,17 @@ func (m prepareModel) readLocalData(done chan<- promise.Promise[[]ginger.SabunHa
 		lr2Scanner := bmsdb.NewLR2Scanner()
 		scanResult, err := lr2Scanner.ScanDirectory(conf.GameInstallationPath)
 		if err != nil {
-			done <- promise.Fail[[]ginger.SabunHash](err)
+			done <- promise.Fail[[]SabunHash](err)
 			return
 		}
 		reader := bmsdb.NewLR2Reader()
 		songs, err := reader.Song(bmsdb.NewQueryContext(scanResult.Song))
 		if err != nil {
-			done <- promise.Fail[[]ginger.SabunHash](err)
+			done <- promise.Fail[[]SabunHash](err)
 			return
 		}
 		for _, song := range songs {
-			data = append(data, ginger.SabunHash{
+			data = append(data, SabunHash{
 				MD5: song.MD5,
 			})
 		}

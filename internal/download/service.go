@@ -28,6 +28,7 @@ type DownloadTaskService struct {
 	updMsgReceiver       chan taskUpdMsg
 	maximumDownloadCount int
 	downloadDirectory    string
+	logs                 []string
 	// Exeprimental, only for test case
 	taskID   uint
 	errCount int
@@ -105,14 +106,14 @@ func (s *DownloadTaskService) handleUpdateTask(msg *taskUpdMsg) error {
 		if msg.final {
 			delete(s.runningTasks, msg.taskID)
 			if msg.err != nil {
-				log.Printf("[DownloadTaskService] task %d fails: %s", msg.taskID, msg.err)
+				s.appendLog("task %d fails: %s", msg.taskID, msg.err)
 				*task.Status = TASK_ERROR
 				task.DownloadSize = 0
 				task.ContentLength = 0
 				task.ErrorMessage = msg.err.Error()
 				s.errCount++
 			} else {
-				log.Printf("[DownloadTaskService] task %d done", msg.taskID)
+				s.appendLog("task %d done", msg.taskID)
 				*task.Status = TASK_SUCCESS
 			}
 		} else {
@@ -121,7 +122,7 @@ func (s *DownloadTaskService) handleUpdateTask(msg *taskUpdMsg) error {
 			task.ContentLength = msg.contentLength
 		}
 	} else {
-		log.Printf("[DownloadTaskService] discard updte msg: %v", *msg)
+		s.appendLog("discard updte msg: %v", *msg)
 	}
 	return nil
 }
@@ -142,7 +143,7 @@ func (s *DownloadTaskService) tryKickingWaitTask() {
 	}
 	next := s.waitTasks[0]
 	taskID := next.ID
-	log.Printf("[DownloadTaskService] try kicking task %d(%s)", taskID, next.URL)
+	s.appendLog("try kicking task %d(%s)", taskID, next.URL)
 	s.waitTasks = s.waitTasks[1:]
 	s.runningTasks[taskID] = next
 	go func() {
@@ -167,7 +168,7 @@ func (s *DownloadTaskService) tryKickingWaitTask() {
 						contentLength: contentLength,
 					}
 				} else {
-					log.Printf("invalid http download response, what is happening?")
+					s.appendLog("invalid http download response, what is happening?")
 				}
 			}, 1*time.Second).
 			Get(next.URL)
@@ -205,10 +206,10 @@ func (s *DownloadTaskService) tryKickingWaitTask() {
 			if _, params, err := mime.ParseMediaType(contentDisposition); err == nil {
 				filename = params["filename"]
 			} else {
-				log.Printf("[DownloadTaskService] cannot parse media type from Content-Disposition")
+				s.appendLog("cannot parse media type from Content-Disposition")
 			}
 		} else {
-			log.Printf("[DownloadTaskService] cannot fetch Content-Disposition from response")
+			s.appendLog("cannot fetch Content-Disposition from response")
 		}
 		// NOTE: <del>Below check & conversion was stolen from wriggle, sorry wriggle!</del>
 		if filename == "" || filename == "/" || filename == "." {
@@ -234,7 +235,7 @@ func (s *DownloadTaskService) tryKickingWaitTask() {
 			return
 		}
 		if _, err := os.Stat(targetPath); err == nil {
-			log.Printf("[DownloadTaskService] target file is already existed, would be replaced with the current one")
+			s.appendLog("target file is already existed, would be replaced with the current one")
 		} else if !os.IsNotExist(err) {
 			s.submitTaskError(next.ID, eris.Errorf("unexpected stat(%s) error: %s", targetPath, err))
 			return
@@ -271,14 +272,14 @@ func (s *DownloadTaskService) SubmitSingleMD5DownloadTask(md5 string, taskName *
 	} else {
 		for _, task := range s.tasks {
 			if task.UniqueSymbol == downloadInfo.UniqueSymbol {
-				log.Printf("skipping download task due to have same unique symbol: %s", task.UniqueSymbol)
+				s.appendLog("skipping download task due to have same unique symbol: %s", task.UniqueSymbol)
 				s.unlock()
 				return eris.New("duplicated download task")
 			}
 		}
 	}
 	s.unlock()
-	log.Printf("[DownloadTaskService] build url: %s", downloadInfo.DownloadURL)
+	log.Printf("build url: %s", downloadInfo.DownloadURL)
 	currentTaskID := s.taskID
 	s.taskID++
 	intermediateFileName := fmt.Sprintf("%d.crdownload", currentTaskID)
@@ -352,4 +353,16 @@ func (s *DownloadTaskService) RestartDownloadTask(taskID uint) error {
 		}
 	}
 	return nil
+}
+
+func (s *DownloadTaskService) GlanceLogs() []string {
+	s.lock()
+	defer s.unlock()
+	return append([]string(nil), s.logs...)
+}
+
+func (s *DownloadTaskService) appendLog(format string, args ...any) {
+	l := fmt.Sprintf(format, args...)
+	log.Print(l)
+	s.logs = append(s.logs, l)
 }
